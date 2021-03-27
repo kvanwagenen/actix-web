@@ -6,7 +6,7 @@ use std::{fmt, net};
 use actix_codec::{AsyncRead, AsyncWrite, Framed};
 use actix_rt::net::TcpStream;
 use actix_service::{pipeline_factory, IntoServiceFactory, Service, ServiceFactory};
-use futures_core::{future::LocalBoxFuture, ready};
+use futures_core::future::LocalBoxFuture;
 use futures_util::future::ready;
 
 use crate::body::MessageBody;
@@ -14,12 +14,18 @@ use crate::config::ServiceConfig;
 use crate::error::{DispatchError, Error};
 use crate::request::Request;
 use crate::response::Response;
-use crate::service::HttpFlow;
+use crate::service::HttpServiceHandler;
 use crate::{ConnectCallback, OnConnectData};
 
 use super::codec::Codec;
 use super::dispatcher::Dispatcher;
 use super::{ExpectHandler, UpgradeHandler};
+
+// Note: This type alias is for back-compat purpose.
+/// `Service` implementation for HTTP/1 transport.
+///
+/// type alias for [crate::service::HttpServiceHandler].
+pub type H1ServiceHandler<T, S, B, X, U> = HttpServiceHandler<T, S, B, X, U>;
 
 /// `ServiceFactory` implementation for HTTP1 transport
 pub struct H1Service<T, S, B, X = ExpectHandler, U = UpgradeHandler> {
@@ -273,7 +279,7 @@ where
     type Response = ();
     type Error = DispatchError;
     type Config = ();
-    type Service = H1ServiceHandler<T, S::Service, B, X::Service, U::Service>;
+    type Service = HttpServiceHandler<T, S::Service, B, X::Service, U::Service>;
     type InitError = ();
     type Future = LocalBoxFuture<'static, Result<Self::Service, Self::InitError>>;
 
@@ -303,7 +309,7 @@ where
                 .await
                 .map_err(|e| log::error!("Init http service error: {:?}", e))?;
 
-            Ok(H1ServiceHandler::new(
+            Ok(HttpServiceHandler::new(
                 cfg,
                 service,
                 expect,
@@ -314,48 +320,8 @@ where
     }
 }
 
-/// `Service` implementation for HTTP/1 transport
-pub struct H1ServiceHandler<T, S, B, X, U>
-where
-    S: Service<Request>,
-    X: Service<Request>,
-    U: Service<(Request, Framed<T, Codec>)>,
-{
-    flow: Rc<HttpFlow<S, X, U>>,
-    on_connect_ext: Option<Rc<ConnectCallback<T>>>,
-    cfg: ServiceConfig,
-    _phantom: PhantomData<B>,
-}
-
-impl<T, S, B, X, U> H1ServiceHandler<T, S, B, X, U>
-where
-    S: Service<Request>,
-    S::Error: Into<Error>,
-    S::Response: Into<Response<B>>,
-    B: MessageBody,
-    X: Service<Request, Response = Request>,
-    X::Error: Into<Error>,
-    U: Service<(Request, Framed<T, Codec>), Response = ()>,
-    U::Error: fmt::Display,
-{
-    fn new(
-        cfg: ServiceConfig,
-        service: S,
-        expect: X,
-        upgrade: Option<U>,
-        on_connect_ext: Option<Rc<ConnectCallback<T>>>,
-    ) -> H1ServiceHandler<T, S, B, X, U> {
-        H1ServiceHandler {
-            flow: HttpFlow::new(service, expect, upgrade),
-            cfg,
-            on_connect_ext,
-            _phantom: PhantomData,
-        }
-    }
-}
-
 impl<T, S, B, X, U> Service<(T, Option<net::SocketAddr>)>
-    for H1ServiceHandler<T, S, B, X, U>
+    for HttpServiceHandler<T, S, B, X, U>
 where
     T: AsyncRead + AsyncWrite + Unpin,
     S: Service<Request>,
@@ -372,27 +338,7 @@ where
     type Future = Dispatcher<T, S, B, X, U>;
 
     fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        ready!(self.flow.expect.poll_ready(cx)).map_err(|e| {
-            let e = e.into();
-            log::error!("Http expect service readiness error: {:?}", e);
-            DispatchError::Service(e)
-        })?;
-
-        if let Some(ref upg) = self.flow.upgrade {
-            ready!(upg.poll_ready(cx)).map_err(|e| {
-                let e = e.into();
-                log::error!("Http upgrade service readiness error: {:?}", e);
-                DispatchError::Service(e)
-            })?;
-        };
-
-        ready!(self.flow.service.poll_ready(cx)).map_err(|e| {
-            let e = e.into();
-            log::error!("Http service readiness error: {:?}", e);
-            DispatchError::Service(e)
-        })?;
-
-        Poll::Ready(Ok(()))
+        self._poll_ready(cx)
     }
 
     fn call(&self, (io, addr): (T, Option<net::SocketAddr>)) -> Self::Future {

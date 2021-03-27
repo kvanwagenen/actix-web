@@ -9,7 +9,7 @@ use std::{
 };
 
 use actix_rt::{
-    net::TcpStream,
+    net::{ActixStream, TcpStream},
     time::{sleep, Sleep},
 };
 use actix_service::Service;
@@ -119,7 +119,7 @@ impl<S> Connector<S> {
     /// Use custom connector.
     pub fn connector<S1, Io1>(self, connector: S1) -> Connector<S1>
     where
-        Io1: ConnectionIo + fmt::Debug,
+        Io1: ConnectionIo + ActixStream + fmt::Debug,
         S1: Service<
                 TcpConnect<Uri>,
                 Response = TcpConnection<Uri, Io1>,
@@ -136,7 +136,7 @@ impl<S> Connector<S> {
 
 impl<S, Io> Connector<S>
 where
-    Io: ConnectionIo + fmt::Debug,
+    Io: ConnectionIo + ActixStream + fmt::Debug,
     S: Service<
             TcpConnect<Uri>,
             Response = TcpConnection<Uri, Io>,

@@ -70,8 +70,8 @@ impl<T, S, B, X, U> Future for Dispatcher<T, S, B, X, U>
 where
     T: AsyncRead + AsyncWrite + Unpin,
     S: Service<Request>,
-    S::Error: Into<Error> + 'static,
     S::Future: 'static,
+    S::Error: Into<Error> + 'static,
     S::Response: Into<Response<B>> + 'static,
     B: MessageBody + 'static,
 {
