@@ -299,6 +299,33 @@ where
         WebsocketContextFut::new(ctx, actor, mb, codec)
     }
 
+    #[inline]
+    /// Create a new Websocket context from a request, an actor, and a codec
+    ///
+    /// Returns a pair, where the first item is an addr for the created actor,
+    /// and the second item is a stream intended to be set as part of the
+    /// response via `HttpResponseBuilder::streaming()`.
+    pub fn with_codec_and_addr<S>(
+        actor: A,
+        stream: S,
+        codec: Codec,
+    ) -> (Addr<A>, impl Stream<Item = Result<Bytes, Error>>)
+    where
+        A: StreamHandler<Result<Message, ProtocolError>>,
+        S: Stream<Item = Result<Bytes, PayloadError>> + 'static,
+    {
+        let mb = Mailbox::default();
+        let mut ctx = WebsocketContext {
+            inner: ContextParts::new(mb.sender_producer()),
+            messages: VecDeque::new(),
+        };
+        ctx.add_stream(WsStream::new(stream, codec));
+
+        let addr = ctx.address();
+
+        (addr, WebsocketContextFut::new(ctx, actor, mb, codec))
+    }
+
     /// Create a new Websocket context
     pub fn with_factory<S, F>(
         stream: S,
